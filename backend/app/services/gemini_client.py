@@ -17,10 +17,12 @@ Your job:
 2. Use available facts from recent conversation history.
 3. Produce a very short business context for the agent.
 4. Produce one human-sounding Hinglish suggestion in Roman script.
+5. Extract customer information based on the provided schema.
 
 Hard rules:
-- Return exactly these two sections only:
+- Return exactly these three sections only:
 [SUMMARY] <1 short line in Roman-script Hinglish with current message context + useful customer/chat info>
+[CUSTOMER_INFO] <Strict JSON object of extracted fields based on schema, or {} if nothing new found>
 [SUGGESTION] <1-2 natural Hinglish lines the caller can actually speak>
 - Use only Roman script. Never use Devanagari or any Hindi script characters.
 - Never use [ANSWER].
@@ -65,6 +67,8 @@ class GeminiClient:
         self,
         utterance: str,
         conversation_context: str,
+        known_fields: dict[str, str],
+        schema_prompt: str,
         model_override: str | None = None,
     ) -> AsyncIterator[str]:
         model = model_override or self.settings.gemini_model
@@ -81,6 +85,8 @@ class GeminiClient:
                             "text": (
                                 f"{SYSTEM_PROMPT}\n\n"
                                 f"Recent conversation history:\n{conversation_context}\n\n"
+                                f"Known extracted fields so far:\n{json.dumps(known_fields, ensure_ascii=True)}\n\n"
+                                f"Available schema fields:\n{schema_prompt}\n\n"
                                 f"Current customer utterance:\n{utterance}"
                             )
                         }

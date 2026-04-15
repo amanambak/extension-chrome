@@ -202,11 +202,22 @@ function handleBackendMessage(message) {
   }
 
   if (message.type === 'ai_response_done') {
+    // Send standard DONE event
     chrome.runtime.sendMessage({
       type: 'AI_RESPONSE_DONE',
       utteranceId: message.utteranceId,
       fullText: message.fullText,
       badgeType: message.badgeType
+    }).catch(() => {});
+
+    // Also send a special CHUNK event with isDone=true to signal sidepanel
+    // that it should replace its interim text with the finalized normalized text
+    chrome.runtime.sendMessage({
+      type: 'AI_RESPONSE_CHUNK',
+      utteranceId: message.utteranceId,
+      text: '',
+      isDone: true,
+      finalText: message.fullText
     }).catch(() => {});
     return;
   }

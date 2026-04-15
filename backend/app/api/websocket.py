@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 from fastapi import APIRouter, HTTPException
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -13,7 +13,11 @@ schema_registry = get_schema_registry()
 
 
 class SummaryRequest(BaseModel):
-    conversation: str
+    conversation: str = Field(..., max_length=50000)
+
+    model_config = ConfigDict(
+        max_str_length=50000
+    )
 
 
 @router.websocket("/ws/session")

@@ -4,9 +4,11 @@ import logging
 import re
 import time
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from app.core.config import get_settings
 from app.models.events import AIDoneEvent
 from app.models.events import AIChunkEvent
 from app.models.events import ErrorEvent
@@ -23,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 class SessionRuntime:
     def __init__(self, websocket: WebSocket) -> None:
+        settings = get_settings()
         self.websocket = websocket
         self.session_id = str(uuid.uuid4())
         self.state = SessionState(session_id=self.session_id)
@@ -36,16 +39,28 @@ class SessionRuntime:
         self.gemini_model_override: str | None = None
         self.finalized_segments = False
         self.finalize_task: asyncio.Task | None = None
-        self.finalize_delay_seconds = 0.45
+        
+        # Track activity
+        self.created_at = datetime.now()
+        self.last_activity_at = datetime.now()
+
+        # Configurable parameters
+        self.finalize_delay_seconds = settings.finalize_delay_seconds
+        self.min_llm_interval_seconds = settings.min_llm_interval_seconds
+        self.min_average_confidence = settings.min_average_confidence
+        self.min_token_length = settings.min_token_length
+
         self.pending_incomplete_utterance = ""
         self.current_segment_confidences: list[float] = []
         self.last_llm_invoked_at = 0.0
-        self.min_llm_interval_seconds = 8.0
-        self.min_average_confidence = 0.72
+
+    def update_activity(self) -> None:
+        self.last_activity_at = datetime.now()
 
     async def run(self) -> None:
         while True:
             message = await self.websocket.receive()
+            self.update_activity()
 
             if message.get("type") == "websocket.disconnect":
                 raise WebSocketDisconnect()
@@ -58,6 +73,7 @@ class SessionRuntime:
                     await self.deepgram.send_audio(data)
 
     async def handle_text_message(self, raw_message: str) -> None:
+        self.update_activity()
         data = json.loads(raw_message)
         message_type = data.get("type")
 
@@ -80,6 +96,7 @@ class SessionRuntime:
         try:
             while True:
                 raw_message = await self.deepgram.recv()
+                self.update_activity()
                 data = json.loads(raw_message)
                 await self.handle_deepgram_message(data)
         except Exception as exc:
@@ -225,7 +242,7 @@ class SessionRuntime:
         if average_confidence < self.min_average_confidence and not has_business_signal:
             return False
 
-        if len(tokens) < 6 and not has_business_signal:
+        if len(tokens) < self.min_token_length and not has_business_signal:
             return False
 
         if len(tokens) < 10 and average_confidence < 0.82 and not has_business_signal:
@@ -504,7 +521,23 @@ class SessionRuntime:
 
 class SessionManager:
     def __init__(self) -> None:
+        settings = get_settings()
         self._sessions: dict[str, SessionRuntime] = {}
+        self.ttl = timedelta(minutes=settings.session_ttl_minutes)
+        self.cleanup_interval = settings.session_cleanup_interval_seconds
+        asyncio.create_task(self._cleanup_expired_sessions())
+
+    async def _cleanup_expired_sessions(self) -> None:
+        while True:
+            await asyncio.sleep(self.cleanup_interval)
+            now = datetime.now()
+            expired_ids = [
+                sid for sid, session in self._sessions.items()
+                if now - session.last_activity_at > self.ttl
+            ]
+            for sid in expired_ids:
+                logger.info("Cleaning up expired session: %s", sid)
+                await self.close_session(sid)
 
     async def create_session(self, websocket: WebSocket) -> SessionRuntime:
         session = SessionRuntime(websocket)
@@ -515,6 +548,6 @@ class SessionManager:
         return self._sessions.get(session_id)
 
     async def close_session(self, session_id: str) -> None:
-        session = self._sessions.get(session_id)
+        session = self._sessions.pop(session_id, None)
         if session is not None:
             await session.close()

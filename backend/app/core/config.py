@@ -19,6 +19,16 @@ class Settings(BaseSettings):
     summary_model: str = "gemini-2.5-flash"
     request_timeout_seconds: float = 60.0
 
+    # Session Management
+    session_ttl_minutes: int = 60
+    session_cleanup_interval_seconds: int = 300
+
+    # Session Runtime Parameters
+    finalize_delay_seconds: float = 0.45
+    min_llm_interval_seconds: float = 8.0
+    min_average_confidence: float = 0.72
+    min_token_length: int = 6
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
